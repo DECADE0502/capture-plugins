@@ -3,7 +3,7 @@
 # OrCAD Capture CIS 23.1 Plugin
 #
 # @Plugin-Name:  Publish Design (Normal)
-# @Version:      1.0.0
+# @Version:      1.1.0
 # @Author:       KAIDOU.WU
 # @Menu:         Tools > Publish Design
 # @Description:  自动处理NCC=NC器件(变灰+显示NC)，另存DSN文件加时间戳
@@ -22,15 +22,13 @@ proc capPublishDesign_execute {} {
     set PROP_NAME  "NCC"
     set PROP_VALUE "NC"
     set GREY_COLOR  45
-    set DEFAULT_COLOR 48
 
     # ------------------------------------------------------------------
     # Step 0: Get active design
     # ------------------------------------------------------------------
     set objDesign [GetActivePMDesign]
     if {$objDesign == "" || $objDesign == "NULL"} {
-        tk_messageBox -icon error -title "Publish Design" \
-            -message "没有打开的设计文件。\nNo active design."
+        puts "Publish Design: ERROR - No active design."
         return
     }
 
@@ -46,8 +44,7 @@ proc capPublishDesign_execute {} {
     set lStatus [DboState]
     set objSchematic [$objDesign GetRootSchematic $lStatus]
     if {$objSchematic == "" || $objSchematic == "NULL"} {
-        tk_messageBox -icon error -title "Publish Design" \
-            -message "无法获取原理图。\nCannot get root schematic."
+        puts "Publish Design: ERROR - Cannot get root schematic."
         return
     }
 
@@ -82,7 +79,6 @@ proc capPublishDesign_execute {} {
                 set lVal [DboTclHelper_sGetConstCharPtr $lReadVal]
 
                 if {$lVal == $PROP_VALUE} {
-                    # This component has NCC=NC -> grey it + ensure NC display
                     incr lNCCount
 
                     # Set component grey
@@ -134,65 +130,78 @@ proc capPublishDesign_execute {} {
     catch {Menu "File::Save"}
 
     # ------------------------------------------------------------------
-    # Step 3: Build timestamped filename and prompt user for save location
+    # Step 3: Resolve the DSN file path
     # ------------------------------------------------------------------
     set lDsnPath [file normalize $lDesignPath]
-
-    # Find the .dsn file(s) in the design directory
-    # The design path is the .opj file, the .dsn is in the same directory
     set lDesignDir [file dirname $lDsnPath]
-    set lBaseName [file rootname [file tail $lDsnPath]]
-    set lTimestamp [clock format [clock seconds] -format "%Y%m%d_%H%M%S"]
-    set lNewBaseName "${lBaseName}_${lTimestamp}"
+    set lExt [file extension $lDsnPath]
 
-    # Find corresponding .dsn file
-    set lDsnFile [file join $lDesignDir "${lBaseName}.dsn"]
-    if {![file exists $lDsnFile]} {
-        # Try to find any .dsn in the directory
-        set lDsnFiles [glob -nocomplain -directory $lDesignDir *.dsn]
-        if {[llength $lDsnFiles] == 0} {
-            tk_messageBox -icon error -title "Publish Design" \
-                -message "找不到 .dsn 文件。\nCannot find .dsn file in design directory."
-            return
+    # GetName may return the .DSN directly or the .opj
+    if {[string tolower $lExt] == ".dsn"} {
+        set lDsnFile $lDsnPath
+        set lBaseName [file rootname [file tail $lDsnPath]]
+    } else {
+        # It's an .opj — look for a .dsn with the same base name
+        set lBaseName [file rootname [file tail $lDsnPath]]
+        set lDsnFile [file join $lDesignDir "${lBaseName}.dsn"]
+        if {![file exists $lDsnFile]} {
+            set lDsnFiles [glob -nocomplain -directory $lDesignDir *.dsn]
+            if {[llength $lDsnFiles] == 0} {
+                puts "Publish Design: ERROR - Cannot find .dsn file."
+                return
+            }
+            set lDsnFile [lindex $lDsnFiles 0]
+            set lBaseName [file rootname [file tail $lDsnFile]]
         }
-        set lDsnFile [lindex $lDsnFiles 0]
-        set lBaseName [file rootname [file tail $lDsnFile]]
-        set lNewBaseName "${lBaseName}_${lTimestamp}"
     }
 
-    set lDefaultSaveName "${lNewBaseName}.dsn"
+    set lTimestamp [clock format [clock seconds] -format "%Y%m%d_%H%M%S"]
+    set lNewFileName "${lBaseName}_${lTimestamp}.dsn"
 
-    # Use Tk save dialog
-    set lSavePath [tk_getSaveFile \
-        -title "发布原理图 - 选择保存位置 (Publish Design)" \
-        -initialdir $lDesignDir \
-        -initialfile $lDefaultSaveName \
-        -defaultextension ".dsn" \
-        -filetypes {{"OrCAD Schematic" {.dsn}} {"All Files" {*}}}]
+    puts "Publish Design: Source DSN = $lDsnFile"
+    puts "Publish Design: New filename = $lNewFileName"
 
-    if {$lSavePath == ""} {
-        puts "Publish Design: User cancelled save."
+    # ------------------------------------------------------------------
+    # Step 4: Prompt user to choose save directory
+    # ------------------------------------------------------------------
+    # Use Capture built-in directory chooser (capOpenArchiveDialog)
+    # Fall back to tk_chooseDirectory if capOpenArchiveDialog is unavailable
+    set lSaveDir ""
+    if {[catch {
+        set lInitDir [DboTclHelper_sMakeCString $lDesignDir]
+        set lChosenPath [capOpenArchiveDialog $lInitDir]
+        set lSaveDir [DboTclHelper_sGetConstCharPtr $lChosenPath]
+    } errMsg]} {
+        puts "Publish Design: capOpenArchiveDialog failed ($errMsg), trying tk_chooseDirectory..."
+        if {[catch {
+            set lSaveDir [tk_chooseDirectory \
+                -title "发布原理图 - 选择保存目录 (Publish Design)" \
+                -initialdir $lDesignDir]
+        } errMsg2]} {
+            puts "Publish Design: tk_chooseDirectory also failed ($errMsg2)."
+            set lSaveDir ""
+        }
+    }
+
+    if {$lSaveDir == ""} {
+        puts "Publish Design: User cancelled or dialog failed."
         return
     }
 
+    set lSavePath [file join $lSaveDir $lNewFileName]
+
+    puts "Publish Design: Saving to $lSavePath"
+
     # ------------------------------------------------------------------
-    # Step 4: Copy DSN file to user-chosen location
+    # Step 5: Copy DSN file to user-chosen location
     # ------------------------------------------------------------------
     if {[catch {file copy -force $lDsnFile $lSavePath} errMsg]} {
-        tk_messageBox -icon error -title "Publish Design" \
-            -message "保存失败: $errMsg\nFailed to save: $errMsg"
+        puts "Publish Design: ERROR - Save failed: $errMsg"
         return
     }
 
-    set lNCMsg ""
-    if {$lNCCount > 0} {
-        set lNCMsg "\n已处理 $lNCCount 个NC器件 (变灰+显示NC)"
-    }
-
-    tk_messageBox -icon info -title "Publish Design" \
-        -message "发布成功！$lNCMsg\n\n保存至:\n$lSavePath"
-
-    puts "Publish Design: Successfully saved to $lSavePath"
+    puts "Publish Design: SUCCESS - Saved to $lSavePath"
+    puts "Publish Design: NC components processed: $lNCCount"
 }
 
 proc capPublishDesign_register {} {
