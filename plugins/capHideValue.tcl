@@ -4,7 +4,7 @@
 #
 # @Plugin-Name:  Hide All Value Display
 # @Version:      1.0.0
-# @Author:       dtms
+# @Author:       KAIDOU.WU
 # @Menu:         Tools > Hide All Values
 # @Description:  一键隐藏当前工程中所有元件的 Value 属性显示
 #############################################################################

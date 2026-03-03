@@ -4,7 +4,7 @@
 #
 # @Plugin-Name:  NCC Property Marker
 # @Version:      1.0.0
-# @Author:       dtms
+# @Author:       KAIDOU.WU
 # @Hotkey:       Ctrl+Q
 # @Menu:         Tools > Add NCC Property
 # @Description:  选中器件Ctrl+Q标记NC：添加NCC=NC属性，显示NC文字，变灰
