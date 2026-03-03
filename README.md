@@ -11,9 +11,8 @@ OrCAD Capture CIS 23.1 TCL 插件仓库。
 | 插件 | 版本 | 快捷键 | 说明 |
 |------|------|--------|------|
 | **NCC Property Marker** | 1.0.0 | `Ctrl+Q` | 选中器件后标记为 NC：添加 NCC=NC 属性，显示 NC 文字，器件变灰 |
-| **Hide All Value Display** | 1.0.0 | — | 一键隐藏当前工程中所有元件的 Value 属性显示 |
+| **Hide / Show All Value Display** | 1.1.0 | — | 一键隐藏或显示当前工程中所有元件的 Value 属性显示 |
 | **Publish Design (Normal)** | 1.0.0 | — | 自动处理所有 NCC=NC 器件（变灰+显示NC），另存 DSN 文件加时间戳 |
-| **Publish PDF (Hide Value)** | 1.0.0 | — | 隐藏所有 Value 后提示用户导出 PDF，完成后可一键恢复 Value 显示 |
 
 ---
 
@@ -32,15 +31,24 @@ OrCAD Capture CIS 23.1 TCL 插件仓库。
 
 ---
 
-### Hide All Value Display (`capHideValue.tcl`)
+### Hide / Show All Value Display (`capHideValue.tcl`)
 
-批量隐藏工程中所有元件的 Value 属性显示。适用于以下场景：
+批量隐藏或显示工程中所有元件的 Value 属性显示。提供两个菜单入口：
 
+**Hide All Values** — 删除所有元件的 Value 显示属性
 - 原理图导出 PDF 前清理多余标注
 - 工程模板初始化时统一隐藏 Value
 - 图纸排版优化
 
-**使用方法**：从菜单 `Tools > Hide All Values` 执行，操作完成后 `Ctrl+S` 保存。
+**Show All Values** — 为所有元件重新创建 Value 显示属性
+- 恢复之前隐藏的 Value 显示
+- 跳过已有 Value 显示的元件，不会重复创建
+- 仅对有 Value 属性的元件生效
+
+**使用方法**：
+- `Tools > Hide All Values` — 隐藏所有 Value
+- `Tools > Show All Values` — 显示所有 Value
+- 操作完成后 `Ctrl+S` 保存
 
 ---
 
@@ -59,31 +67,6 @@ OrCAD Capture CIS 23.1 TCL 插件仓库。
 - 确保所有 NC 器件在发布版本中正确标注
 
 **使用方法**：从菜单 `Tools > Publish Design` 执行。
-
----
-
-### Publish PDF — PDF 发布 (`capPublishPDF.tcl`)
-
-分两步完成「隐藏 Value → 导出 PDF → 恢复 Value」的工作流：
-
-**第一步：隐藏 Value 并准备导出**
-- 自动隐藏所有元件的 Value 属性显示
-- 在内存中保存所有隐藏状态，用于后续恢复
-- 弹出提示，指引用户手动执行 `File → Export → PDF`
-
-**第二步：恢复 Value 显示**
-- PDF 导出完成后，从菜单执行恢复操作
-- 自动重建所有被隐藏的 Value 显示属性
-- 设计恢复到隐藏前的状态
-
-适用场景：
-- 需要生成不带阻值/容值标注的简洁 PDF 文档
-- 原理图外发给客户或供应商时隐藏敏感参数
-
-**使用方法**：
-1. `Tools > Publish PDF (Hide Value)` — 隐藏所有 Value
-2. 手动 `File → Export → PDF` 导出
-3. `Tools > Restore Value Display` — 恢复所有 Value
 
 ---
 
