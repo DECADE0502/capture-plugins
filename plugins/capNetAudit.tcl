@@ -309,6 +309,7 @@ proc capNetAudit_saveCSV {namedCount autoCount issues danglingNets} {
 
     # ------------------------------------------------------------------
     # Determine output path: same directory as the design file
+    # Use GetName (same as capPublishDesign — returns .dsn or .opj path)
     # ------------------------------------------------------------------
     set lNullObj "NULL"
     set objDesign [GetActivePMDesign]
@@ -316,72 +317,81 @@ proc capNetAudit_saveCSV {namedCount autoCount issues danglingNets} {
     set designName "design"
 
     if {$objDesign != "" && $objDesign != $lNullObj} {
-        set lPathCS [DboTclHelper_sMakeCString]
-        $objDesign GetPath $lPathCS
-        set designPath [DboTclHelper_sGetConstCharPtr $lPathCS]
+        set lNameCS [DboTclHelper_sMakeCString]
+        $objDesign GetName $lNameCS
+        set designPath [DboTclHelper_sGetConstCharPtr $lNameCS]
+        puts "Net Audit: Design path = $designPath"
         if {$designPath != ""} {
+            set designPath [file normalize $designPath]
             set designDir [file dirname $designPath]
             set designName [file rootname [file tail $designPath]]
         }
     }
 
-    # Fallback to user desktop if design path is unavailable
-    if {$designDir == ""} {
+    # Fallback to user desktop
+    if {$designDir == "" || ![file isdirectory $designDir]} {
         set designDir [file join $::env(USERPROFILE) "Desktop"]
+        puts "Net Audit: Using fallback path: $designDir"
     }
 
     # Timestamp for filename
     set timestamp [clock format [clock seconds] -format "%Y%m%d_%H%M%S"]
     set csvFile [file join $designDir "${designName}_NetAudit_${timestamp}.csv"]
+    puts "Net Audit: Saving to $csvFile"
 
     # ------------------------------------------------------------------
     # Write CSV with BOM for Excel compatibility
     # ------------------------------------------------------------------
-    set fd [open $csvFile w]
-    fconfigure $fd -encoding utf-8
+    if {[catch {
+        set fd [open $csvFile w]
+        fconfigure $fd -encoding utf-8
 
-    # UTF-8 BOM
-    puts -nonewline $fd "\xEF\xBB\xBF"
+        # UTF-8 BOM
+        puts -nonewline $fd "\xEF\xBB\xBF"
 
-    # Header: Summary
-    puts $fd "Net Name Audit Report"
-    puts $fd "Design,$designName"
-    puts $fd "Date,[clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S}]"
-    puts $fd "Named Nets,$namedCount"
-    puts $fd "Auto-Generated Skipped,$autoCount"
-    puts $fd "Similar Pairs Found,$issueCount"
-    puts $fd "Single-Connection Nets,$danglingCount"
-    puts $fd ""
+        # Header: Summary
+        puts $fd "Net Name Audit Report"
+        puts $fd "Design,$designName"
+        puts $fd "Date,[clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S}]"
+        puts $fd "Named Nets,$namedCount"
+        puts $fd "Auto-Generated Skipped,$autoCount"
+        puts $fd "Similar Pairs Found,$issueCount"
+        puts $fd "Single-Connection Nets,$danglingCount"
+        puts $fd ""
 
-    # Section 1: Similar net pairs
-    puts $fd "=== Similar Net Pairs ==="
-    puts $fd "Net A,Net B,Issue Type"
+        # Section 1: Similar net pairs
+        puts $fd "=== Similar Net Pairs ==="
+        puts $fd "Net A,Net B,Issue Type"
 
-    set sorted [lsort -index 3 -integer $issues]
-    foreach item $sorted {
-        set n1   [lindex $item 0]
-        set n2   [lindex $item 1]
-        set desc [lindex $item 2]
-        puts $fd "$n1,$n2,$desc"
-    }
-
-    puts $fd ""
-
-    # Section 2: Single-connection nets
-    puts $fd "=== Single-Connection Nets ==="
-    puts $fd "Net Name,Note"
-
-    foreach dn [lsort $danglingNets] {
-        set note "Only 1 connection - possible dangling net"
-        if {[regexp -nocase {^(vcc|vdd|gnd|vss|pgnd|agnd)} $dn]} {
-            set note "Power net with only 1 connection"
+        set sorted [lsort -index 3 -integer $issues]
+        foreach item $sorted {
+            set n1   [lindex $item 0]
+            set n2   [lindex $item 1]
+            set desc [lindex $item 2]
+            puts $fd "$n1,$n2,$desc"
         }
-        puts $fd "$dn,$note"
+
+        puts $fd ""
+
+        # Section 2: Single-connection nets
+        puts $fd "=== Single-Connection Nets ==="
+        puts $fd "Net Name,Note"
+
+        foreach dn [lsort $danglingNets] {
+            set note "Only 1 connection - possible dangling net"
+            if {[regexp -nocase {^(vcc|vdd|gnd|vss|pgnd|agnd)} $dn]} {
+                set note "Power net with only 1 connection"
+            }
+            puts $fd "$dn,$note"
+        }
+
+        close $fd
+
+        puts "Net Audit: Report saved to $csvFile"
+    } errMsg]} {
+        puts "Net Audit: ERROR writing CSV - $errMsg"
     }
 
-    close $fd
-
-    puts "Net Audit: Report saved to $csvFile"
     puts "Net Audit: Done."
 }
 
