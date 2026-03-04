@@ -3,10 +3,10 @@
 # OrCAD Capture CIS 23.1 Plugin
 #
 # @Plugin-Name:  Net Name Audit
-# @Version:      1.0.0
+# @Version:      1.1.0
 # @Author:       KAIDOU.WU
 # @Menu:         Tools > Net Name Audit
-# @Description:  扫描全设计网络名,检测相似/可疑命名(拼写差异,大小写,尾缀混淆等)
+# @Description:  扫描全设计网络名,检测相似/可疑命名和悬空网络,输出CSV报告
 #############################################################################
 
 proc capNetAudit_shouldProcess {args} {
@@ -296,102 +296,93 @@ proc capNetAudit_execute {} {
     # ------------------------------------------------------------------
     puts "Net Audit: Analysis complete. $issueCount similar pairs, $danglingCount single-conn nets."
 
-    capNetAudit_showReport $namedCount $autoCount $issues $danglingNets
+    capNetAudit_saveCSV $namedCount $autoCount $issues $danglingNets
 }
 
 # ======================================================================
-# Report window (Tk)
+# Save report as CSV file
 # ======================================================================
-proc capNetAudit_showReport {namedCount autoCount issues danglingNets} {
+proc capNetAudit_saveCSV {namedCount autoCount issues danglingNets} {
 
     set issueCount [llength $issues]
     set danglingCount [llength $danglingNets]
 
-    set w .capNetAuditReport
-    catch {destroy $w}
+    # ------------------------------------------------------------------
+    # Determine output path: same directory as the design file
+    # ------------------------------------------------------------------
+    set lNullObj "NULL"
+    set objDesign [GetActivePMDesign]
+    set designDir ""
+    set designName "design"
 
-    toplevel $w
-    wm title $w "Net Name Audit Report"
-    wm geometry $w 720x520
-    wm minsize $w 600 400
+    if {$objDesign != "" && $objDesign != $lNullObj} {
+        set lPathCS [DboTclHelper_sMakeCString]
+        $objDesign GetPath $lPathCS
+        set designPath [DboTclHelper_sGetConstCharPtr $lPathCS]
+        if {$designPath != ""} {
+            set designDir [file dirname $designPath]
+            set designName [file rootname [file tail $designPath]]
+        }
+    }
 
-    # Summary bar
-    set summary "$namedCount named nets | $autoCount auto-gen skipped | $issueCount similar pairs | $danglingCount single-conn"
-    label $w.summary -text $summary -font {{Microsoft YaHei UI} 10 bold} \
-        -bg "#16213e" -fg "#e8eaf6" -anchor w -padx 12 -pady 8
-    pack $w.summary -fill x
+    # Fallback to user desktop if design path is unavailable
+    if {$designDir == ""} {
+        set designDir [file join $::env(USERPROFILE) "Desktop"]
+    }
 
-    # Notebook with two tabs
-    ttk::notebook $w.nb
-    pack $w.nb -fill both -expand 1 -padx 8 -pady 4
+    # Timestamp for filename
+    set timestamp [clock format [clock seconds] -format "%Y%m%d_%H%M%S"]
+    set csvFile [file join $designDir "${designName}_NetAudit_${timestamp}.csv"]
 
-    # ── Tab 1: Similar net pairs ──────────────────────────────────────
-    set f1 [ttk::frame $w.nb.similar]
-    $w.nb add $f1 -text " Similar Nets ($issueCount) "
+    # ------------------------------------------------------------------
+    # Write CSV with BOM for Excel compatibility
+    # ------------------------------------------------------------------
+    set fd [open $csvFile w]
+    fconfigure $fd -encoding utf-8
 
-    set cols {net1 net2 reason}
-    ttk::treeview $f1.tree -columns $cols -show headings -height 16
-    $f1.tree heading net1 -text "Net A"
-    $f1.tree heading net2 -text "Net B"
-    $f1.tree heading reason -text "Issue"
-    $f1.tree column net1 -width 220 -anchor w
-    $f1.tree column net2 -width 220 -anchor w
-    $f1.tree column reason -width 200 -anchor w
+    # UTF-8 BOM
+    puts -nonewline $fd "\xEF\xBB\xBF"
 
-    ttk::scrollbar $f1.sb -orient vertical -command [list $f1.tree yview]
-    $f1.tree configure -yscrollcommand [list $f1.sb set]
+    # Header: Summary
+    puts $fd "Net Name Audit Report"
+    puts $fd "Design,$designName"
+    puts $fd "Date,[clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S}]"
+    puts $fd "Named Nets,$namedCount"
+    puts $fd "Auto-Generated Skipped,$autoCount"
+    puts $fd "Similar Pairs Found,$issueCount"
+    puts $fd "Single-Connection Nets,$danglingCount"
+    puts $fd ""
 
-    pack $f1.sb -side right -fill y
-    pack $f1.tree -fill both -expand 1
+    # Section 1: Similar net pairs
+    puts $fd "=== Similar Net Pairs ==="
+    puts $fd "Net A,Net B,Issue Type"
 
-    # Sort issues: case diff first, then edit dist, then base, then underscore
     set sorted [lsort -index 3 -integer $issues]
-
     foreach item $sorted {
         set n1   [lindex $item 0]
         set n2   [lindex $item 1]
         set desc [lindex $item 2]
-        $f1.tree insert {} end -values [list $n1 $n2 $desc]
+        puts $fd "$n1,$n2,$desc"
     }
 
-    # ── Tab 2: Single-connection (dangling) nets ──────────────────────
-    set f2 [ttk::frame $w.nb.dangling]
-    $w.nb add $f2 -text " Single-Connection ($danglingCount) "
+    puts $fd ""
 
-    set cols2 {netname note}
-    ttk::treeview $f2.tree -columns $cols2 -show headings -height 16
-    $f2.tree heading netname -text "Net Name"
-    $f2.tree heading note -text "Note"
-    $f2.tree column netname -width 300 -anchor w
-    $f2.tree column note -width 350 -anchor w
-
-    ttk::scrollbar $f2.sb -orient vertical -command [list $f2.tree yview]
-    $f2.tree configure -yscrollcommand [list $f2.sb set]
-
-    pack $f2.sb -side right -fill y
-    pack $f2.tree -fill both -expand 1
+    # Section 2: Single-connection nets
+    puts $fd "=== Single-Connection Nets ==="
+    puts $fd "Net Name,Note"
 
     foreach dn [lsort $danglingNets] {
         set note "Only 1 connection - possible dangling net"
         if {[regexp -nocase {^(vcc|vdd|gnd|vss|pgnd|agnd)} $dn]} {
             set note "Power net with only 1 connection"
         }
-        $f2.tree insert {} end -values [list $dn $note]
+        puts $fd "$dn,$note"
     }
 
-    # Bottom bar
-    frame $w.bottom -bg "#edf0f5" -height 36
-    pack $w.bottom -fill x -side bottom
+    close $fd
 
-    button $w.bottom.close -text "Close" -command [list destroy $w] \
-        -font {{Microsoft YaHei UI} 10} -padx 16 -pady 4
-    pack $w.bottom.close -side right -padx 8 -pady 4
-
-    label $w.bottom.hint -text "Tip: Review case diffs and edit-dist=1 pairs carefully" \
-        -font {{Microsoft YaHei UI} 9} -fg "#666" -bg "#edf0f5"
-    pack $w.bottom.hint -side left -padx 8
-
-    puts "Net Audit: Report window opened."
+    puts "Net Audit: Report saved to $csvFile"
+    puts "Net Audit: Done."
 }
 
 # ======================================================================
