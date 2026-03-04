@@ -45,29 +45,52 @@ proc capPowerTree_jsonEscape {str} {
 # =========================================================================
 proc capPowerTree_classifyComponent {partName value refdes} {
     set pn [string toupper $partName]
+    set val [string toupper $value]
     set ref [string toupper $refdes]
 
-    # LDO regulators
-    if {[regexp {LDO|AMS1117|HT73|ME6211|RT9013|AP2112|MIC5504|TLV70|TPS7A|LP2985|LP5907|NCV8|SPX3819|XC6206|XC6220} $pn]} {
+    # Combined search string: check both partName and value
+    # (some designs store part number in Value field)
+    set search "$pn $val"
+
+    # LDO regulators (match common LDO part numbers)
+    if {[regexp {LDO|AMS1117|HT73|ME6211|RT9013|AP2112|MIC5504|TLV70|TPS7A|LP2985|LP5907|NCV8|SPX3819|XC6206|XC6220|ETA5055|SGM2019|SGM2036|LP5907|NCP16|MCP1700|AP7370|AP7380} $search]} {
         return "LDO"
     }
     # DC-DC converters
-    if {[regexp {DCDC|DC-DC|TPS5|TPS6|LM25|LM26|MP1|MP2|SY8|RT7|RT8|AOZ|NCP|LMR|TLV6|AP63|AP64|SIC4|MT2|MT3|XL} $pn]} {
+    if {[regexp {DCDC|DC-DC|TPS5|TPS6|LM25|LM26|MP1|MP2|SY8|RT7|RT8|AOZ|NCP|LMR|TLV6|AP63|AP64|SIC4|MT2|MT3|XL|ETA2865|ETA3425|SGM6603|SYR8|TPS54|TPS62|LM267|MPQ} $search]} {
         return "DCDC"
     }
+    # MOSFET / power transistors
+    if {[regexp {^Q} $ref] && [regexp {MOS|FET|NMOS|PMOS|CJ[ABCD]} $search]} {
+        return "MOSFET"
+    }
+    if {[regexp {CJAB|CJAC|AO34|SI23|BSS138|2N7002|IRLML} $search]} {
+        return "MOSFET"
+    }
     # Voltage references
-    if {[regexp {REF|LM4040|TL431|ADR} $pn]} {
+    if {[regexp {VREF|LM4040|TL431|ADR} $search]} {
         return "VREF"
     }
     # Power switches / load switches
-    if {[regexp {SWITCH|TPS22|SIP3|RT9742|AP22} $pn]} {
+    if {[regexp {SWITCH|TPS22|SIP3|RT9742|AP22} $search]} {
         return "SWITCH"
     }
-    # Ferrite beads by refdes pattern
-    if {[regexp {^FB|^L} $ref]} {
-        return "FILTER"
+    # Level translators
+    if {[regexp {ETA4553|TXB0|TXS0|GTL2002|SN74|LSF0|NVT20} $search]} {
+        return "LEVEL_SHIFTER"
     }
-    # Capacitors (bypass/decoupling)
+    # Ferrite beads (by value pattern: xxxR-xxxMHz or refdes FB*)
+    if {[regexp {^FB} $ref]} {
+        return "FERRITE_BEAD"
+    }
+    if {[regexp {^L} $ref] && [regexp {R.*MHZ} $val]} {
+        return "FERRITE_BEAD"
+    }
+    # Inductors (by refdes L* and value like xxuH)
+    if {[regexp {^L} $ref]} {
+        return "INDUCTOR"
+    }
+    # Capacitors
     if {[regexp {^C} $ref]} {
         return "CAP"
     }
@@ -75,24 +98,69 @@ proc capPowerTree_classifyComponent {partName value refdes} {
     if {[regexp {^R} $ref]} {
         return "RES"
     }
-    # Inductors
-    if {[regexp {^L} $ref]} {
-        return "INDUCTOR"
-    }
     # Diodes
-    if {[regexp {^D} $ref] || [regexp {DIODE|SCHOTTKY|ZENER} $pn]} {
+    if {[regexp {^D} $ref]} {
         return "DIODE"
     }
     # Connectors
-    if {[regexp {^J|^P|^CN|CONN} $ref]} {
+    if {[regexp {^J|^P[0-9]|^CN|CONN} $ref]} {
         return "CONNECTOR"
     }
-    # ICs
+    # Test points
+    if {[regexp {^TP} $ref]} {
+        return "TEST_POINT"
+    }
+    # Crystals / oscillators
+    if {[regexp {^X|^Y} $ref]} {
+        return "CRYSTAL"
+    }
+    # Switches
+    if {[regexp {^S[0-9]} $ref]} {
+        return "SWITCH_MECH"
+    }
+    # ICs (generic fallback for U*)
     if {[regexp {^U} $ref]} {
         return "IC"
     }
 
     return "OTHER"
+}
+
+# =========================================================================
+# Helper: Check if a net name matches power/ground naming patterns
+#
+# Strategy: Only match nets whose name clearly IS a power rail.
+# Nets like "UWB_SWDIO_1V8" have a voltage suffix but are signals
+# in a voltage domain — NOT power rails. We avoid matching those.
+# =========================================================================
+proc capPowerTree_isPowerNet {netName} {
+    set n [string toupper $netName]
+
+    # Skip auto-generated unnamed nets (N followed by digits)
+    if {[regexp {^N\d+$} $netName]} {
+        return 0
+    }
+
+    # ── Explicit power rail prefixes ──────────────────────────────
+    # VCC_*, VDD_*, VBUS, VOUT, VBAT, VSYS, VREF, VIN, V+, V-
+    if {[regexp {^V(CC|DD|BUS|OUT|BAT|SYS|REF|IN)($|[_0-9])} $n]} { return 1 }
+    if {[regexp {^V[+-]} $n]} { return 1 }
+
+    # Bare voltage rails: +3V3, +5V, +1V8, 3.3V, 12V, etc.
+    if {[regexp {^\+?[0-9]+\.?[0-9]*V[0-9]*$} $n]} { return 1 }
+
+    # ── Ground patterns ───────────────────────────────────────────
+    # GND, GND_SIGNAL, AGND, DGND, PGND, etc.
+    # Must START with GND or be exactly *GND (AGND, DGND, PGND)
+    if {[regexp {^GND($|_)} $n]}  { return 1 }
+    if {[regexp {^[ADP]GND($|_)} $n]} { return 1 }
+
+    # ── Power keywords anywhere (but NOT as suffix of signal names) ──
+    # Only match if the net contains VCC/VDD as a word boundary
+    # e.g. "VCC_USB_VBUS" yes, "UWB_SWDIO_1V8" no
+    if {[regexp {(^|_)(VCC|VDD|VBUS|VBAT|VSYS)($|_)} $n]} { return 1 }
+
+    return 0
 }
 
 # =========================================================================
@@ -150,10 +218,12 @@ proc capPowerTree_execute {} {
         $net GetName $netNameCS
         set netName [DboTclHelper_sGetConstCharPtr $netNameCS]
 
+        # Check if this is a power net by name pattern
+        set isPower [capPowerTree_isPowerNet $netName]
+
         # Iterate all pin occurrences on this net
         set pinIter [$net NewPortOccurrencesIter $lStatus]
         set pinList {}
-        set hasPowerPin 0
         set pinCount 0
 
         if {$pinIter != $lNullObj && $pinIter != ""} {
@@ -171,9 +241,6 @@ proc capPowerTree_execute {} {
                     # Pin type
                     set ptype [$pinInst GetPinType $lStatus]
                     set ptypeStr [capPowerTree_pinTypeStr $ptype]
-                    if {$ptype == $::POWER} {
-                        set hasPowerPin 1
-                    }
 
                     # Pin number
                     set pinNumCS [DboTclHelper_sMakeCString]
@@ -231,8 +298,8 @@ proc capPowerTree_execute {} {
             delete_DboFlatNetPortOccurrencesIter $pinIter
         }
 
-        # A net is a power net if it has at least one POWER-type pin
-        if {$hasPowerPin && $pinCount > 0} {
+        # Power net identified by name pattern
+        if {$isPower && $pinCount > 0} {
             dict set powerNets $netName $pinList
             incr powerNetCount
         }
@@ -245,7 +312,7 @@ proc capPowerTree_execute {} {
     puts "Power Tree: Found [dict size $components] unique components on power nets."
 
     if {$powerNetCount == 0} {
-        puts "Power Tree: WARNING - No power nets found. Check design has power symbols."
+        puts "Power Tree: WARNING - No power nets found. Check net naming conventions."
         return
     }
 
